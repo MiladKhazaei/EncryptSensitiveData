@@ -6,7 +6,7 @@ public class AnonymizationService
     // In production, inject this via Key Vault or secure configuration like IConfiguration
     private readonly byte[] _hmacKey = Encoding.UTF8.GetBytes("Secret_Server_Side_Key_Here");
     // 32-byte key for AES-256. Inject securely in production!
-    private readonly byte[] _aesKey = Encoding.UTF8.GetBytes("12345678901234567890123456789012");
+    private readonly byte[] _aesKey = Encoding.UTF8.GetBytes("12345678901234567890123456789012_Inject_in_Production");
 
     // Deterministic Hashing for Searchable exact-matches (Such as NationalId)
     public string? HashData(string? rawData)
@@ -49,7 +49,6 @@ public class AnonymizationService
         Buffer.BlockCopy(cipherBytes, 0, payload, nonce.Length + tag.Length, cipherBytes.Length);
 
         return Convert.ToBase64String(payload);
-
     }
 
     // Decrypt
