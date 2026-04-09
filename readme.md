@@ -178,7 +178,11 @@ Store your keys securely. In local development, use `.NET User Secrets`. In Prod
 
 ### 3. Usage in Application Layer
 
-Inject the service and process entities before saving to the database context.
+You can choose between the following two approaches based on your architectural needs:
+
+#### `Approach A:` Manual Service Injection
+
+You can inject the service directly into your Application layer (Controllers or Application Services) and process the entities manually before saving them via the database context.
 
 ```csharp
 // Hashing/Encryption Example
@@ -187,7 +191,116 @@ var patientEntity = new PatientInformationEntity
     HospitalCode = PatientInfo.HospitalCode,
     NationalIdHash = _anonymizationService.HashData(PatientInfo.NationalId),
     PhoneEncrypted = _anonymizationService.EncryptData(PatientInfo.Phone)
+};
+```
+
+#### `Approach B:` Use EF Core Value Converter
+
+This approach moves cryptographic operations out of the Application Layer and pushes them down into the Data Access Layer (DAL) using Entity Framework Core Value Conversions. This guarantees that developers never "forget" to encrypt sensitive fields.
+
+To implement this, we must configure the pipeline:
+
+1. We must build classes that inherit from `ValueConverter<string, string>`
+
+```csharp
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+
+public class AesGcmStringConverter : ValueConverter<string?, string?>
+{
+    public AesGcmStringConverter(AnonymizationService anonymizationService, ConverterMappingHints? mappingHints = null)
+        : base(
+            // Write to DB (convert C# string to encrypted Base64)
+            modelValue => anonymizationService.EncryptData(modelValue),
+            // Read from DB (convert Base64 back to plain C# string)
+            providerValue => anonymizationService.DecryptData(providerValue),
+            mappingHints)
+    {
+    }
 }
+
+public class HmacStringConverter : ValueConverter<string?, string?>
+{
+    public HmacStringConverter(AnonymizationService anonymizationService, ConverterMappingHints? mappingHints = null)
+        : base(
+            // Write to DB (convert C# string to Hash)
+            modelValue => anonymizationService.HashData(modelValue),
+            // Read from DB (cannot decrypt, so just return the hash to the C# model)
+            providerValue => providerValue,
+            mappingHints)
+    {
+    }
+}
+```
+
+![EFCore StringConverter](./images/EFCoreStringConverter.png)
+
+2. Inject the service and configure the DbContext
+   We will inject `AnonymizationService` into the `ApplicationDbContext` constructor (Since the DbContext is resolved by the DI container and can accept services) and apply the converters using the Fluent API
+
+```csharp
+using Microsoft.EntityFrameworkCore;
+
+public class HealthcareDbContext : DbContext
+{
+    private readonly AnonymizationService _anonymizationService;
+
+    // Inject the AnonymizationService directly into your DbContext
+    public HealthcareDbContext(
+        DbContextOptions<HealthcareDbContext> options,
+        AnonymizationService anonymizationService) : base(options)
+    {
+        _anonymizationService = anonymizationService;
+    }
+
+    public DbSet<PatientInformationEntity> Patients { get; set; }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        base.OnModelCreating(modelBuilder);
+
+        // Instantiate our custom converters
+        var aesConverter = new AesGcmStringConverter(_anonymizationService);
+        var hmacConverter = new HmacStringConverter(_anonymizationService);
+
+        // Apply Converters to specific entity properties
+        modelBuilder.Entity<PatientInformationEntity>(entity =>
+        {
+            // Apply Hashing to National ID
+            entity.Property(e => e.NationalId)
+                  .HasConversion(hmacConverter)
+                  .HasMaxLength(64); // Hashes are fixed length
+
+            // Apply Encryption to Phone
+            entity.Property(e => e.Phone)
+                  .HasConversion(aesConverter)
+                  .HasMaxLength(256); // Ciphertext + Nonce + Tag + Base64 expansion
+        });
+    }
+}
+```
+
+![Healthcare DbContext](./images/hash_implementation.png)
+
+3. Clean Application Code
+   Now, your application code becomes beautifully clean and ignorant of cryptography. Now EF Core handles hashing and encryption automatically in the background.
+
+```csharp
+// Store (Application Layer)
+var patientEntity = new PatientInformationEntity
+{
+    HospitalCode = viewModel.PatientInfo.HospitalCode,
+    NationalId = viewModel.PatientInfo.NationalId,
+    Phone = viewModel.PatientInfo.Phone
+};
+_context.Patients.Add(patientEntity);
+await _context.SaveChangesAsync();
+
+// Search (Application Layer)
+// You can query with plaintext! EF Core converts "12345" to the HMAC hash automatically.
+var patient = await _context.Patients
+    .FirstOrDefaultAsync(p => p.NationalId == viewModel.SearchNationalId);
+
+// When 'patient' is returned, patient.Phone is automatically decrypted!
 ```
 
 ## ⚠️ Security Disclaimer
