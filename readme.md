@@ -1,6 +1,6 @@
 # 🔐 HIPAA-Compliant Data Anonymization Service (.NET Core)
 
-![.NET](https://img.shields.io/badge/.NET-8.0%2B-blueviolet)
+![.NET](https://img.shields.io/badge/.NET-10.0%2B-blueviolet)
 ![Security](https://img.shields.io/badge/Security-AES--GCM-success)
 ![Cryptography](https://img.shields.io/badge/Cryptography-HMACSHA256-success)
 ![Compliance](https://img.shields.io/badge/Compliance-HIPAA-critical)
@@ -279,7 +279,7 @@ public class HealthcareDbContext : DbContext
 }
 ```
 
-![Healthcare DbContext](./images/hash_implementation.png)
+![Healthcare DbContext](./images/HealthcareDbContext.png)
 
 3. Clean Application Code
    Now, your application code becomes beautifully clean and ignorant of cryptography. Now EF Core handles hashing and encryption automatically in the background.
